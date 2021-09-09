@@ -41,9 +41,11 @@ class Game {
     constructor() {
         this.sprites= [];
         this.spriteHash = {};
+        this.hudSprites = [];
         this.lastUpdate = Date.now();
         this.keyboard = {};
         this.camera = null;
+        this.credits = 10;
         this.setup = () => {};
     }
     init(setupCallback) {
@@ -74,6 +76,7 @@ class Game {
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         this.cleanupSprites();
         this.updateSprites(delta);
+        this.updateHudSprites(delta);
         if(this.camera) {
             this.camera.update(delta);
         }
@@ -84,6 +87,7 @@ class Game {
         if(this.camera) {
             this.camera.resetTransformation();
         }
+        this.renderHudSprites();
         this.requestFrame();
     }
     requestFrame() {
@@ -106,6 +110,11 @@ class Game {
         }
         return sprite;
     }
+    addHudSprite(sprite) {
+        sprite.game = this;
+        this.hudSprites.push(sprite);
+        return sprite;
+    }
     cleanupSprites() {
         this.sprites.forEach((layer,idx) => {
             this.sprites[idx] = layer.filter(sprite => sprite.ttl > 0);
@@ -116,10 +125,16 @@ class Game {
             layer.forEach(sprite => sprite.update(delta));
         });
     }
+    updateHudSprites(delta) {
+        this.hudSprites.forEach(sprite => sprite.update(delta));
+    }
     renderSprites() {
         this.sprites.forEach(layer => {
-            layer.forEach(sprite => sprite.render(this.camera));
+            layer.forEach(sprite => sprite.render());
         });
+    }
+    renderHudSprites() {
+        this.hudSprites.forEach(sprite => sprite.render());
     }
 }
 class Camera {
@@ -162,6 +177,7 @@ class Sprite {
     }
     render() {}
 }
+
 class Planet extends Sprite {
     constructor(obj) {
         super(obj);
@@ -171,11 +187,13 @@ class Planet extends Sprite {
     render() {
         ctx.save();
         ctx.translate(this.pos.x, this.pos.y);
-        ctx.beginPath();
-        ctx.fillStyle = '#222222';
-        ctx.arc(0, 0, this.radius * 4, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.closePath();
+        for(let r = 4; r > 1; r -=0.25) {
+            ctx.beginPath();
+            ctx.fillStyle = '#aaaaff08';
+            ctx.arc(0, 0, this.radius * r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.closePath();
+        }
         ctx.beginPath();
         ctx.fillStyle = this.color;
         ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
@@ -195,6 +213,7 @@ class Customer extends Sprite {
         this.planetTo = planetTo;
         this.radius = 10;
         this.boarded = null;
+        this.money = Math.floor(Math.random() * 20 + 10);
     }
     update(delta) {
         super.update(delta);
@@ -243,6 +262,17 @@ class Particle extends Sprite {
             this.rect = this.rect.getMultiplied(1 + (this.resize -1) * delta);
         }
         this.rot += this.dRot;
+        if(this.game.spriteHash.planet) {
+            this.game.spriteHash.planet.forEach(planet => {
+                let distance = planet.pos.diff(this.pos);
+                let dist = distance.calcDist();
+                if(dist < planet.radius) {
+                    this.pos.x += -this.dPos.x * delta;
+                    this.pos.y += -this.dPos.y * delta;
+                    this.dPos = this.dPos.getMultiplied(-0.2);
+                }
+            });
+        }
     }
     render() {
         ctx.save();
@@ -255,6 +285,7 @@ class Particle extends Sprite {
         ctx.restore();
     }
 }
+
 class Junk extends Sprite {
     constructor(obj) {
         super(obj);
@@ -306,8 +337,8 @@ class Player extends Sprite {
                 this.pos.sum(thrustDirection.getMultiplied(55-this.origin.x)), // nose
                 this.pos.sum(thrustDirection90Left.getMultiplied(5 + this.origin.y)).sum(thrustDirection.getMultiplied(30-this.origin.x)), // left front fin
                 this.pos.sum(thrustDirection90Right.getMultiplied(5 + this.origin.y)).sum(thrustDirection.getMultiplied(30-this.origin.x)), // right front fin
-                this.pos.sum(thrustDirection90Left.getMultiplied(5 + this.origin.y)).sum(thrustDirection.getMultiplied(2-this.origin.x)), // left back fin
-                this.pos.sum(thrustDirection90Right.getMultiplied(5 + this.origin.y)).sum(thrustDirection.getMultiplied(2-this.origin.x)), // right back fin
+                this.pos.sum(thrustDirection90Left.getMultiplied(5 + this.origin.y)).sum(thrustDirection.getMultiplied(3-this.origin.x)), // left back fin
+                this.pos.sum(thrustDirection90Right.getMultiplied(5 + this.origin.y)).sum(thrustDirection.getMultiplied(3-this.origin.x)), // right back fin
             ];
             let gear = this.pos.sum(thrustDirection.getMultiplied(-this.origin.x));
 
@@ -399,10 +430,9 @@ class Player extends Sprite {
             } else {
                 if(this.customer.planetTo === landedPlanet) {
                     this.customer.ttl = 0;
-                    this.customer.boarded = null;
+                    this.customer.boarded = null;                    
+                    this.game.credits += this.customer.money;
                     this.customer = null;
-                    
-                    // add cash
                 }
             }
         }
@@ -432,21 +462,68 @@ class Player extends Sprite {
         ctx.restore();
     }
 }
+
+class Text extends Sprite {
+    constructor(obj) {
+        super(obj);
+        let {text, updateText, font, align, baseline} = obj;
+        this.text = text || "";
+        this.font = font || "bold 16px sans-serif";
+        this.align = align || "start"; // start, center, end
+        this.baseline = baseline || "hanging"; // hanging, middle, alphabetic
+        if(typeof updateText == "function") {
+            this.updateText = updateText;
+        } else {
+            this.updateText = ()=>{};
+        }
+    }
+    update(delta) {
+        super.update(delta);
+        this.updateText(this);
+    }
+    render() {
+        ctx.save();
+        ctx.beginPath();
+        ctx.translate(this.pos.x, this.pos.y);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = this.font;
+        ctx.textAlign = this.align;
+        ctx.fillText(this.text, 0, 0);
+        ctx.closePath();
+        ctx.restore();
+        //console.log(this.text);
+    }
+}
+
+
+
 let space = new Game();
 
-let planet1 = space.addSprite(new Planet({x:600,y:300,r:80, color:'#00aa00'}), "planet");
-let planet2 = space.addSprite(new Planet({x:-50,y:600,r:80, color:'#00aa00'}), "planet");
-//space.addSprite(new Planet({x:1200,y:200,r:70}), "planet");
-let customer = space.addSpriteToLayer(new Customer({planetFrom: planet1, planetTo: planet2}), 2,"customer");
 for(let i = 0; i < 500; i++) {
     space.addSprite(new Junk({
-        x:Math.floor(Math.random()*canvas.width * 10),
-        y:Math.floor(Math.random()*canvas.height * 10),
+        x:Math.floor(Math.random()*canvas.width * 10 - canvas.width * 5),
+        y:Math.floor(Math.random()*canvas.height * 10 - canvas.height * 5),
         w:Math.floor(Math.random()*5)+2,
         h:Math.floor(Math.random()*5)+2,
         dPos:new Vec2d({x:0,y:0})
     }), "junk");
 }
+
+let planet1 = space.addSprite(new Planet({x:800,y:300,r:120, color:'#00aa66'}), "planet");
+let planet2 = space.addSprite(new Planet({x:-50,y:600,r:80, color:'#00aa00'}), "planet");
+let planet3 = space.addSprite(new Planet({x:-0,y:-400,r:140, color:'#55aa00'}), "planet");
+//space.addSprite(new Planet({x:1200,y:200,r:70}), "planet");
+let customer = space.addSpriteToLayer(new Customer({planetFrom: planet1, planetTo: planet2}), 2,"customer");
+
+space.addHudSprite(new Text({
+    x:10,
+    y:20,
+    text:'CREDITS:',
+    align:'start',
+    updateText: (self) => { 
+        self.text = "CREDITS: " + self.game.credits;
+    }
+}));
 
 
 space.init(() => {
