@@ -203,6 +203,26 @@ class Planet extends Sprite {
     }
 }
 
+class Moon extends Planet {
+    constructor(obj) {
+        super(obj);
+        let {orbits, angularPos, angularSpeed, orbitRadius} = obj;
+        this.orbits = orbits;
+        this.orbitRadius = orbitRadius || orbits.radius * 4;
+        this.angularPos = angularPos || 0;
+        this.angularSpeed = angularSpeed || 0.25;
+    }
+    update(delta) {
+        this.angularPos += this.angularSpeed * delta;
+        let pos = new Vec2d(this.orbits.pos);
+        let orbitPos = new Vec2d({
+            x:Math.cos(this.angularPos) * this.orbitRadius, 
+            y:Math.sin(this.angularPos) * this.orbitRadius
+        });
+        this.pos = pos.sum(orbitPos);
+    }
+}
+
 class Customer extends Sprite {
     constructor(obj) {
         let {planetFrom, planetTo} = obj;
@@ -324,63 +344,71 @@ class Player extends Sprite {
         this.thrustDirectionStrength = 200;
         this.maxSpeed = 300;
         this.customer = null;
+        this.landed = false;
+        this.landedPlanet = null;
+        this.landedPos = null;
     }
 
     update(delta) {
         let thrustDirection = new Vec2d({x:Math.cos(this.rot), y:Math.sin(this.rot)});
         let thrustDirection90Left = new Vec2d({x:thrustDirection.y, y:-thrustDirection.x});
         let thrustDirection90Right = new Vec2d({x:-thrustDirection.y, y:thrustDirection.x});
-        let landed = false;
-        let landedPlanet = null;
         if(this.game.spriteHash.planet) {
             let explodeSensors = [
                 this.pos.sum(thrustDirection.getMultiplied(55-this.origin.x)), // nose
                 this.pos.sum(thrustDirection90Left.getMultiplied(5 + this.origin.y)).sum(thrustDirection.getMultiplied(30-this.origin.x)), // left front fin
                 this.pos.sum(thrustDirection90Right.getMultiplied(5 + this.origin.y)).sum(thrustDirection.getMultiplied(30-this.origin.x)), // right front fin
-                this.pos.sum(thrustDirection90Left.getMultiplied(5 + this.origin.y)).sum(thrustDirection.getMultiplied(3-this.origin.x)), // left back fin
-                this.pos.sum(thrustDirection90Right.getMultiplied(5 + this.origin.y)).sum(thrustDirection.getMultiplied(3-this.origin.x)), // right back fin
+                this.pos.sum(thrustDirection90Left.getMultiplied(5 + this.origin.y)).sum(thrustDirection.getMultiplied(3.5-this.origin.x)), // left back fin
+                this.pos.sum(thrustDirection90Right.getMultiplied(5 + this.origin.y)).sum(thrustDirection.getMultiplied(3.5-this.origin.x)), // right back fin
             ];
             let gear = this.pos.sum(thrustDirection.getMultiplied(-this.origin.x));
 
-            this.game.spriteHash.planet.forEach(planet => {
-                let distance = planet.pos.diff(this.pos);
-                let dist = distance.calcDist();
-                if(dist < planet.radius * 4) {
+            if(this.landed) {
+                this.pos = this.landedPlanet.pos.sum(this.landedPos);
+            } else {
+                this.game.spriteHash.planet.forEach(planet => {
+                    let distance = planet.pos.diff(this.pos);
+                    let dist = distance.calcDist();
+                    if(dist > planet.radius * 4) {
+                        return;
+                    }
                     this.dPos._add(distance.getNormalized());
-                }
-                let exploded = false;
-                explodeSensors.forEach(sensor => {
-                    let sensorDistance = planet.pos.diff(sensor).calcDist();
-                    if(sensorDistance <= planet.radius) {
-                        exploded = true;
+                    let exploded = false;
+                    explodeSensors.forEach(sensor => {
+                        let sensorDistance = planet.pos.diff(sensor).calcDist();
+                        if(sensorDistance <= planet.radius) {
+                            exploded = true;
+                        }
+                    });
+
+                    if(exploded) {
+                        this.ttl = 0;
+                        for(let i = 0; i <100; i++) {
+                            this.game.addSprite(new Particle({
+                                pos: this.pos.sum(new Vec2d({x:Math.random()*50 - 25, y:Math.random()*20 - 10})),
+                                rect: {x:Math.random()*5+2, y:Math.random()*5+2},
+                                dPos: this.dPos.getMultiplied(0.1).sum(new Vec2d({x:Math.random()*150 - 25, y:Math.random()*150 - 25})),
+                                dRot: Math.random()*0.2-0.11,
+                                ttl: Math.random()*5+1,
+                                isDebris: true,
+                                color:'#ffffaa'
+                            }), "debris");
+                        }
+                        if(this.customer) {
+                            this.customer.ttl = 2;
+                        }
+                        setTimeout(()=> {
+                            this.game.setup();
+                        }, 1000);
+                    }
+                    let gearDistance = planet.pos.diff(gear).calcDist();
+                    if(gearDistance <= planet.radius && !exploded) {
+                        this.landed = true;
+                        this.landedPlanet = planet;
+                        this.landedPos = this.pos.diff(planet.pos);
                     }
                 });
-
-                if(exploded) {
-                    this.ttl = 0;
-                    for(let i = 0; i <20; i++) {
-                        this.game.addSprite(new Particle({
-                            pos: this.pos.sum(new Vec2d({x:Math.random()*50 - 25, y:Math.random()*20 - 10})),
-                            rect: {x:Math.random()*5+2, y:Math.random()*5+2},
-                            dPos: {x:Math.random()*50 - 25, y:Math.random()*50 - 25},
-                            dRot: Math.random()*0.2-0.11,
-                            ttl: Math.random()*2+1,
-                            isDebris: true
-                        }), "debris");
-                    }
-                    if(this.customer) {
-                        this.customer.ttl = 2;
-                    }
-                    setTimeout(()=> {
-                        this.game.setup();
-                    }, 1000);
-                }
-                let gearDistance = planet.pos.diff(gear).calcDist();
-                if(gearDistance <= planet.radius && !exploded) {
-                    landed = true;
-                    landedPlanet = planet;
-                }
-            });
+            }
         }
         if(this.game.keyPressed("ArrowUp")) {
             this.dPos._add(thrustDirection.getMultiplied(delta * this.thrustDirectionStrength));
@@ -395,18 +423,20 @@ class Player extends Sprite {
                 color: '#ffff00',
                 resize: 0.4
             }), "debris");
-            landed = false;
+            this.landed = false;
+            this.landedPlanet = null;
+            this.landedPos = null;
         }
         if(this.game.keyPressed("ArrowDown")) {
             //this.dPos.y += 3;
         }
         if(this.game.keyPressed("ArrowLeft")) {
-            if(!landed) {
+            if(!this.landed) {
                 this.rot -= 0.02;
             }
         }
         if(this.game.keyPressed("ArrowRight")) {
-            if(!landed) {
+            if(!this.landed) {
                 this.rot += 0.02;
             }
         }
@@ -415,20 +445,20 @@ class Player extends Sprite {
             this.dPos = this.dPos.getMultiplied(this.maxSpeed / speed);
         }
         
-        if(!landed) {
+        if(!this.landed) {
             this.pos.x += this.dPos.x * delta;
             this.pos.y += this.dPos.y * delta;
         } else {
             this.dPos.x = 0;
             this.dPos.y = 0;
             if(!this.customer) {
-                let customer = this.game.spriteHash.customer.find(customer => customer.planetFrom === landedPlanet);
+                let customer = this.game.spriteHash.customer.find(customer => customer.planetFrom === this.landedPlanet);
                 if(customer) {
                     customer.boarded = this;
                     this.customer = customer;
                 }
             } else {
-                if(this.customer.planetTo === landedPlanet) {
+                if(this.customer.planetTo === this.landedPlanet) {
                     this.customer.ttl = 0;
                     this.customer.boarded = null;                    
                     this.game.credits += this.customer.money;
@@ -512,6 +542,7 @@ for(let i = 0; i < 500; i++) {
 let planet1 = space.addSprite(new Planet({x:800,y:300,r:120, color:'#00aa66'}), "planet");
 let planet2 = space.addSprite(new Planet({x:-50,y:600,r:80, color:'#00aa00'}), "planet");
 let planet3 = space.addSprite(new Planet({x:-0,y:-400,r:140, color:'#55aa00'}), "planet");
+let planet2moon1 = space.addSprite(new Moon({x:-100000,y:-100000,r:40, color:'#aaaaaa', orbits:planet2}), "planet");
 //space.addSprite(new Planet({x:1200,y:200,r:70}), "planet");
 let customer = space.addSpriteToLayer(new Customer({planetFrom: planet1, planetTo: planet2}), 2,"customer");
 
